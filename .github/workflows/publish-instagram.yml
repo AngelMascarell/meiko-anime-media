@@ -1,0 +1,19 @@
+name: Publish Instagram Carousel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'post-config.json'
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish to Instagram
+        env:
+          IG_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python3 publish.py
