@@ -5,15 +5,88 @@ on:
     branches: [main]
     paths:
       - 'post-config.json'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Publicar aunque este post ya conste como publicado'
+        type: boolean
+        default: false
+
+# Nunca dos publicaciones a la vez: evita carruseles cruzados si se lanzan
+# dos runs seguidos.
+concurrency:
+  group: instagram-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Publish to Instagram
+      - uses: actions/checkout@v5
+
+      - name: Instalar ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          ffmpeg -version | head -1
+
+      - name: Normalizar medios
+        run: python3 normalize_media.py
+
+      - name: Guardar los medios corregidos
+        run: |
+          if [ -z "$(git status --porcelain media)" ]; then
+            echo "Ningun archivo modificado, nada que commitear."
+            exit 0
+          fi
+          echo "Hay medios corregidos, subiendolos a main..."
+          mkdir -p /tmp/media-corregidos
+          cp -r media/. /tmp/media-corregidos/
+          git config user.name "meiko-auto-posting"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Nos apoyamos siempre en el ultimo main, por si este run venia de
+          # un commit antiguo (por ejemplo al relanzar un run viejo).
+          git fetch origin main
+          git checkout -B auto-publish origin/main
+          cp -r /tmp/media-corregidos/. media/
+          git add media
+          if git diff --cached --quiet; then
+            echo "main ya tenia los archivos corregidos."
+            exit 0
+          fi
+          git commit -m "Auto: pista de audio silenciosa en los videos del post"
+          git push origin HEAD:main
+          echo "Medios actualizados en main."
+
+      - name: Publicar en Instagram
         env:
           IG_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FORCE_PUBLISH: ${{ inputs.force && '1' || '0' }}
         run: python3 publish.py
+
+      - name: Registrar la publicacion
+        if: always()
+        run: |
+          if [ ! -f published.json ]; then
+            exit 0
+          fi
+          cp published.json /tmp/published.json
+          git config user.name "meiko-auto-posting"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B auto-publish origin/main
+          cp /tmp/published.json published.json
+          git add published.json
+          if git diff --cached --quiet; then
+            echo "El registro ya estaba al dia."
+            exit 0
+          fi
+          git commit -m "Auto: registro de publicacion en Instagram"
+          git push origin HEAD:main
+          echo "Registro actualizado en main."
