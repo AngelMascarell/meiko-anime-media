@@ -14,6 +14,7 @@ archivos que hayan cambiado.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -71,6 +72,11 @@ def anadir_audio_silencioso(ruta):
 
 
 def main():
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        print("AVISO: ffmpeg no esta disponible en este runner, me salto la "
+              "normalizacion. Los videos deben llevar ya su pista de audio.")
+        return 0
+
     if not os.path.isfile(CONFIG):
         print(f"ERROR: no encuentro {CONFIG}")
         return 1
