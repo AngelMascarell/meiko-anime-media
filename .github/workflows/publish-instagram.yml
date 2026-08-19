@@ -30,10 +30,10 @@ jobs:
       - name: Instalar ffmpeg
         run: |
           if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ffmpeg
+            sudo timeout 300 apt-get update -qq || echo "AVISO: apt-get update no ha terminado a tiempo"
+            sudo timeout 600 apt-get install -y -qq ffmpeg || echo "AVISO: no se ha podido instalar ffmpeg"
           fi
-          ffmpeg -version | head -1
+          ffmpeg -version | head -1 || echo "AVISO: sin ffmpeg; se omitira la normalizacion"
 
       - name: Normalizar medios
         run: python3 normalize_media.py
