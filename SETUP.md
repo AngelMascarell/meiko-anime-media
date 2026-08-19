@@ -14,9 +14,8 @@ para publicar carruseles automaticamente en @meiko.anime, via GitHub Actions.
   - `.github/workflows/publish-instagram.yml`: workflow que se dispara al
     hacer push de `post-config.json`, o manualmente desde la pestana Actions
     (boton "Run workflow").
-  - `normalize_media.py`: prepara los archivos antes de publicar. Anade una
-    pista de audio silenciosa a los videos que no tengan audio y avisa de
-    formatos raros. Se ejecuta solo, no hay que llamarlo a mano.
+  - `normalize_media.py`: revisa los archivos y, si hace falta, arregla los
+    videos mudos. Ver "El paso de los videos mudos" mas abajo.
   - `publish.py`: valida el post, crea los containers, espera el procesado,
     arma el carrusel y publica.
   - `published.json`: registro de lo ya publicado. Sirve para no publicar dos
@@ -24,40 +23,133 @@ para publicar carruseles automaticamente en @meiko.anime, via GitHub Actions.
   - Secrets del repo (Settings > Secrets and variables > Actions):
     `IG_ACCESS_TOKEN` (token de larga duracion, 60 dias) e `IG_USER_ID`.
 
-## Como publicar un post nuevo (con ayuda de Claude)
+---
 
-1. Decirle a Claude "publica esto" senalando una carpeta con las imagenes.
-2. Claude copia/sube esos archivos a `media/` en este repo.
-3. Claude propone un caption (estilo meiko.anime); se revisa y aprueba.
-4. Claude escribe `post-config.json` en la raiz del repo con el orden final
-   de archivos (rutas dentro de `media/`) y el caption aprobado, y hace push.
-5. Ese push dispara el workflow automaticamente. El robot (GitHub Actions)
-   publica el carrusel sin que nadie tenga que ejecutar nada a mano.
+## Procedimiento para publicar un post nuevo
 
-## Formato de post-config.json
+Esta es la receta completa. Si se sigue tal cual, publicar un post son unos
+3 minutos y no hay que tocar nada del sistema.
+
+### 1. Recibir la carpeta
+
+Angel conecta o sube una carpeta con las piezas del carrusel, normalmente 10,
+numeradas del 1 al 10:
+
+- `1.jpg` portada
+- `2.jpg` a `8.jpg` los 7 animes
+- `9.mp4` el video "¡NAKAMA!" (pregunta a la audiencia)
+- `10.jpg` el cierre ("guarda el post")
+
+### 2. Arreglar los videos ANTES de subirlos  ← el paso que mas se olvida
+
+Instagram **rechaza los videos sin pista de audio** en un carrusel. El video
+`9.mp4` que Angel exporta suele venir mudo.
+
+Comprobarlo y arreglarlo antes de subir nada:
+
+```bash
+# ¿tiene audio?
+ffprobe -v error -select_streams a -show_entries stream=codec_name \
+  -of csv=p=0 9.mp4          # si no imprime nada, esta mudo
+
+# arreglarlo (misma receta que usa normalize_media.py)
+ffmpeg -y -loglevel error -i 9.mp4 \
+  -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+  -shortest -c:v copy -c:a aac -b:a 128k -movflags +faststart \
+  9-con-audio.mp4
+```
+
+Se sube el arreglado. Asi el workflow no tiene que instalar ninguna
+herramienta y publica directo.
+
+### 3. Renombrar con el prefijo del tema
+
+En `media/` conviven los archivos de todos los posts, asi que **nunca** se
+suben como `1.jpg`, `2.jpg`... (pisarian los de un post anterior). Se usa un
+prefijo del tema:
+
+```
+fantasia-1.jpg    juegosmesa-1.jpg    bucles-1.jpg
+fantasia-2.jpg    juegosmesa-2.jpg    bucles-2.jpg
+...               ...                 ...
+fantasia-9.mp4    juegosmesa-9.mp4    bucles-9.mp4
+fantasia-10.jpg   juegosmesa-10.jpg   bucles-10.jpg
+```
+
+### 4. Subir los archivos a `media/`
+
+Subir los 10 y **esperar a que el commit termine** antes de seguir. Si se
+navega antes de tiempo, el commit se queda a medias y no sube nada.
+
+### 5. Proponer el caption y esperar el visto bueno
+
+Estilo @meiko.anime: tono cercano y con gracia, una coletilla corta al lado de
+cada anime, sin sentimentalismos ni frases de folleto. Termina invitando a
+comentar y a guardar el post, y cierra con "¡NAKAMA!".
+
+No se escribe `post-config.json` hasta que Angel apruebe el caption: escribirlo
+dispara la publicacion.
+
+### 6. Escribir `post-config.json`
 
 ```json
 {
-  "caption": "texto del post",
+  "caption": "texto aprobado",
   "media": [
-    {"path": "media/archivo1.jpg", "type": "IMAGE"},
-    {"path": "media/video.mp4", "type": "VIDEO"},
-    {"path": "media/archivo2.jpg", "type": "IMAGE"}
+    {"path": "media/juegosmesa-1.jpg", "type": "IMAGE"},
+    {"path": "media/juegosmesa-9.mp4", "type": "VIDEO"}
   ]
 }
 ```
 
+El push de este archivo dispara el workflow. Tambien se puede lanzar a mano
+desde Actions > Publish Instagram Carousel > "Run workflow".
+
+### 7. Vigilar el run
+
+Un run normal dura entre 1 y 3 minutos, casi todo esperando a que Instagram
+procese el video. Al terminar, el resumen del run trae el media id y el
+enlace al post.
+
+---
+
+## El paso de los videos mudos
+
+Este es el punto que ha dado problemas y conviene entenderlo.
+
+Instagram rechaza los videos sin audio en un carrusel, asi que hay que
+anadirles una pista silenciosa. Eso lo hace `ffmpeg`, y **ffmpeg no viene
+instalado en los runners de GitHub**.
+
+Durante un tiempo el workflow instalaba ffmpeg con `apt-get` en *cada*
+publicacion. Eso metia una dependencia de red en el camino critico de todos
+los posts, y el 19 de agosto de 2026 `apt-get` se quedo esperando el lock de
+`dpkg` y bloqueo dos runs seguidos (11 y 8 minutos sin una sola linea de log).
+
+Ahora funciona asi:
+
+1. **`normalize_media.py --revisar`** mira los archivos en Python puro: lee las
+   cajas del MP4 para saber si hay pista de audio, y las cabeceras JPEG/PNG y
+   MP4 para las medidas y la duracion. No necesita ffmpeg ni instalar nada, y
+   tarda un segundo. Deja en la salida del step `hay_que_arreglar=true|false`.
+2. Los pasos de **instalar ffmpeg**, **normalizar** y **guardar los medios
+   corregidos** solo se ejecutan si esa revision ha dicho `true`.
+3. Si los videos llegan ya con audio (lo normal, siguiendo el paso 2 del
+   procedimiento), esos tres pasos se saltan enteros y el run va directo a
+   publicar.
+
+Es decir: `apt-get` ya no esta en el camino de un post normal. Y si algun dia
+hiciera falta, esta acotado con `timeout` para que no pueda colgarse.
+
+---
+
 ## Que hace el robot al publicar
 
-El workflow ejecuta estos pasos, y se para en cuanto algo no cuadra:
+El workflow se para en cuanto algo no cuadra:
 
-0. **Comprueba el token** contra la API antes de subir nada. Si el token esta
-   caducado o bloqueado, el run falla en 2 segundos en vez de a mitad.
-1. **Normaliza los medios**: si algun video no tiene pista de audio, le anade
-   una en silencio y commitea el archivo corregido. Instagram rechaza los
-   videos mudos, asi que esto ya no hay que hacerlo a mano. Tambien avisa si
-   un video dura menos de 3s o mas de 60s, si la relacion de aspecto se sale
-   del rango 0.80-1.91, o si las piezas no miden todas lo mismo.
+0. **Comprueba el token** contra la API antes de subir nada. Si esta caducado
+   o bloqueado, el run falla en 2 segundos en vez de a mitad.
+1. **Revisa los medios** (Python puro, sin instalar nada).
 2. **Valida `post-config.json`**: entre 2 y 10 piezas, caption de 2200
    caracteres como maximo, 30 hashtags como maximo, sin archivos repetidos,
    sin rutas que no existan y con extensiones que Instagram acepte.
@@ -76,7 +168,6 @@ se reintentan solos hasta 5 veces con esperas crecientes.
 
 ## Republicar un post a proposito
 
-Si hace falta volver a publicar un carrusel que ya consta en `published.json`:
 Actions > Publish Instagram Carousel > "Run workflow" > marcar la casilla
 **"Publicar aunque este post ya conste como publicado"**.
 
@@ -91,12 +182,18 @@ Actions > Publish Instagram Carousel > "Run workflow" > marcar la casilla
 
 ## Historial
 
-- Primer post publicado manualmente (via script .ps1 local) el 15 ago 2026:
-  carrusel "TOP animes verano 2026", 10 items.
-- Infraestructura de GitHub Actions montada el mismo dia para publicaciones
-  futuras sin pasos manuales.
-- 18 ago 2026: post "TOP 7 animes sobre bucles temporales". Fallo dos veces
+- **15 ago 2026**: primer post publicado a mano (script .ps1 local): carrusel
+  "TOP animes verano 2026", 10 items. Ese mismo dia se monta el workflow.
+- **17 ago 2026**: "TOP 7 animes de fantasia". Fallo la primera vez con
+  "API access blocked" (permiso de la app de Meta); se arreglo por el lado de
+  Meta y se relanzo.
+- **18 ago 2026**: "TOP 7 animes sobre bucles temporales". Fallo dos veces
   (video sin audio, y publicacion lanzada antes de que el carrusel estuviera
   listo). A raiz de eso se anadio `normalize_media.py`, la espera real del
   carrusel, los reintentos, las validaciones previas y el registro
   anti-duplicados.
+- **19 ago 2026**: "TOP 7 animes sobre juegos de mesa". Dos runs bloqueados
+  porque `apt-get` no podia instalar ffmpeg. Se rehizo la revision de medios
+  en Python puro y se dejo la instalacion de ffmpeg como paso condicional,
+  para sacar `apt-get` del camino critico. Se documento el procedimiento de
+  arreglar los videos antes de subirlos.

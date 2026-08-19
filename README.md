@@ -7,9 +7,12 @@ descargarlos desde una URL publica) y ejecuta el robot que los publica.
 
 ## Como se publica un post
 
-1. Subir las piezas del carrusel a `media/`.
-2. Escribir `post-config.json` en la raiz con el caption y el orden final.
-3. Hacer push. Eso dispara el workflow y el post se publica solo.
+1. Comprobar que el video del carrusel tiene pista de audio. Si esta mudo,
+   arreglarlo **antes** de subirlo (ver abajo).
+2. Subir las piezas a `media/`, con un prefijo del tema para no pisar las de
+   posts anteriores (`juegosmesa-1.jpg`, `juegosmesa-9.mp4`...).
+3. Escribir `post-config.json` en la raiz con el caption y el orden final.
+4. Hacer push. Eso dispara el workflow y el post se publica solo.
 
 ```json
 {
@@ -24,17 +27,35 @@ descargarlos desde una URL publica) y ejecuta el robot que los publica.
 Tambien se puede lanzar a mano desde **Actions > Publish Instagram Carousel >
 Run workflow**.
 
+El procedimiento completo, paso a paso, esta en [SETUP.md](SETUP.md).
+
+## El video tiene que llevar audio
+
+Instagram rechaza los videos mudos en un carrusel. El video suele exportarse
+sin pista de audio, asi que se le anade una en silencio antes de subirlo:
+
+```bash
+ffmpeg -y -loglevel error -i 9.mp4 \
+  -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+  -shortest -c:v copy -c:a aac -b:a 128k -movflags +faststart \
+  9-con-audio.mp4
+```
+
+Si se sube ya arreglado, el workflow no tiene que instalar nada y publica
+directo. Si se sube mudo, el workflow lo detecta, instala ffmpeg, lo arregla y
+commitea el archivo corregido: funciona igual, solo tarda unos minutos mas.
+
 ## Archivos
 
 | Archivo | Que hace |
 |---|---|
 | `post-config.json` | El post a publicar: caption y lista de piezas. Es lo unico que se edita normalmente. |
 | `media/` | Imagenes y videos, servidos por raw.githubusercontent.com. |
-| `normalize_media.py` | Prepara los archivos antes de publicar (ver abajo). |
+| `normalize_media.py` | Revisa los medios y, si hace falta, arregla los videos mudos. |
 | `publish.py` | Valida, sube a Instagram y publica. |
 | `published.json` | Registro de lo ya publicado. Lo escribe el robot. |
 | `.github/workflows/publish-instagram.yml` | El workflow que orquesta todo. |
-| `SETUP.md` | Detalles de la app de Meta, tokens y mantenimiento. |
+| `SETUP.md` | Procedimiento completo, app de Meta, tokens y mantenimiento. |
 
 ## Que hace el robot
 
@@ -42,9 +63,12 @@ Antes de publicar nada:
 
 - **Comprueba el token** contra la API. Si esta caducado o bloqueado, falla en
   2 segundos en vez de a mitad de la subida.
-- **Arregla los videos sin audio.** Instagram rechaza los videos mudos en los
-  carruseles, asi que si detecta uno le anade una pista en silencio y commitea
-  el archivo corregido. No hay que acordarse de exportar con audio.
+- **Revisa los medios sin instalar nada.** Lee las cajas del MP4 y las
+  cabeceras de las imagenes en Python puro para saber si algun video esta
+  mudo y si las medidas son raras. Tarda un segundo.
+- **Solo si hace falta**, instala ffmpeg y anade la pista de audio silenciosa
+  al video, commiteando el archivo corregido. Si los videos ya llegan bien,
+  estos pasos se saltan enteros.
 - **Avisa** si un video dura menos de 3s o mas de 60s, si la relacion de
   aspecto se sale de 0.80-1.91, o si las piezas no miden todas lo mismo.
 - **Valida el post**: entre 2 y 10 piezas, caption de 2200 caracteres como
