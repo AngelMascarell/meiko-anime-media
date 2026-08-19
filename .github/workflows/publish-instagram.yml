@@ -27,18 +27,27 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Solo mira los archivos. Python puro, sin instalar nada: en 1 segundo
+      # sabemos si hay algun video mudo que haya que arreglar.
+      - name: Revisar los medios
+        id: revision
+        run: python3 normalize_media.py --revisar
+
+      # Los tres pasos siguientes solo se ejecutan si la revision ha
+      # encontrado algo que arreglar. Lo normal es que se salten todos.
       - name: Instalar ffmpeg
+        if: steps.revision.outputs.hay_que_arreglar == 'true'
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo timeout 300 apt-get update -qq || echo "AVISO: apt-get update no ha terminado a tiempo"
-            sudo timeout 600 apt-get install -y -qq ffmpeg || echo "AVISO: no se ha podido instalar ffmpeg"
-          fi
-          ffmpeg -version | head -1 || echo "AVISO: sin ffmpeg; se omitira la normalizacion"
+          sudo timeout 300 apt-get update -qq || echo "AVISO: apt-get update no ha terminado a tiempo"
+          sudo timeout 600 apt-get install -y -qq ffmpeg || echo "AVISO: no se ha podido instalar ffmpeg"
+          ffmpeg -version | head -1
 
       - name: Normalizar medios
+        if: steps.revision.outputs.hay_que_arreglar == 'true'
         run: python3 normalize_media.py
 
       - name: Guardar los medios corregidos
+        if: steps.revision.outputs.hay_que_arreglar == 'true'
         run: |
           if [ -z "$(git status --porcelain media)" ]; then
             echo "Ningun archivo modificado, nada que commitear."
